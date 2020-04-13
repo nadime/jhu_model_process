@@ -19,12 +19,15 @@ import json
 import boto
 
 import logging
+import argparse
+
+START_FROM_CSVS = False
 
 HOSP_DATA_CSV = "https://data.chhs.ca.gov/dataset/6882c390-b2d7-4b9a-aefa-2068cee63e47/resource/6cd8d424-dfaa-4bdd-9410-a3d656e1176e/download/covid19data.csv"
 HOSP_DATA_NEEDED_COLS = {
                             'COVID-19 Positive Patients':           'actual_hosp',
-                            'Suspected COVID-19 Positive Patients': 'actual_justsusp_hosp', 
-                            'ICU COVID-19 Positive Patients':       'actual_icu', 
+                            'Suspected COVID-19 Positive Patients': 'actual_justsusp_hosp',
+                            'ICU COVID-19 Positive Patients':       'actual_icu',
                             'ICU COVID-19 Suspected Patients':      'actual_justsusp_icu'
 }
 
@@ -46,10 +49,10 @@ DATA_OUTPUT_COLS = ['hosp_curr','incidH','icu_curr','incidICU','incidI','incidD'
 
 BASELOC        = "/home/ec2-user/data/kitgraphs"
 LATESTLOC      = os.path.join(BASELOC,"%s" % date.today().isoformat().replace('-',''))
-INPUTLOC       = os.path.join(LATESTLOC, "input")
-OUTPUTLOC      = os.path.join(LATESTLOC, "output")
-OUTGRAPH_LOC   = os.path.join(OUTPUTLOC,"graphs")
-OUTDATA_LOC    = os.path.join(OUTPUTLOC,"data")
+INPUTLOC       = ""
+OUTPUTLOC      = ""
+OUTGRAPH_LOC   = ""
+OUTDATA_LOC    = ""
 LATEST_SYMLINK = os.path.join(BASELOC,"latest")
 
 STATE = 'CA'
@@ -57,10 +60,12 @@ DATESLUG = datetime.now().strftime('%Y%m%d_%H%M%S')
 OUTPATH = Path('output/%s/graphs_%s' % (STATE, DATESLUG))
 
 AWS_REGION            = 'us-east-2'
-USERNAME							= 'rstudio'
+USERNAME			  = 'rstudio'
 S3_BUCKET_NAME        = "jhumodelaggregates"
 S3_CREDBUCKET_NAME	  = "ca-covid-credentials"
-S3_CREDFILE					  = S3_BUCKET_NAME + "/" + USERNAME + ".json"
+S3_CREDFILE	    	  = S3_BUCKET_NAME + "/" + USERNAME + ".json"
+AWS_ACCESS_KEY        = ""
+AWS_SECRET_ACCESS_KEY = ""
 
 # scenario name to file location
 SCENARIOS = {
@@ -74,21 +79,30 @@ INFILE_PREFIX = 'high_death'
 REGIONS = {}
 REGION_COUNTIES = {}
 
+def setup_argparse():
+    # add s3 bucket as option?
+    parser = argparse.ArgumentParser(description="Process JHU Model Outputs.")
+    parser.add_argument('-i','--input',metavar='inputdir',dest='input',action="store",type=str,required=True,help='input directory to read graph_data from')
+    parser.add_argument('-o','--output',metavar='inputdir',dest='output',action="store",type=str,required=True,help='base output directory')
+    parser.add_argument('--start_from_csvs',action='store_true',default=False,help="set to skip all data loading and just write to s3")
+    return parser.parse_args()
+
 def get_s3_credentials():
-		conn = boto.s3.connect_to_region(AWS_REGION)
+    global AWS_ACCESS_KEY,AWS_SECRET_ACCESS_KEY
+
+    # test
+    conn = boto.s3.connect_to_region(AWS_REGION)
     bucket = conn.get_bucket(S3_CREDBUCKET_NAME,validate=True)
-		credfile = bucket.get_key(S3_CREDFILE)
-		creddict = json.loads(credfile.get_contents_as_string())
-		if USERNAME != creddict['username']:
-				raise Exception("Error: read credentials for wrong user (tried %s got %s)" % (USERNAME,creddict['username']))
-		if AWS_REGION != creddict['aws-region']:
-				raise Exception("Error: credentials region mismatch for user %s (wanted %s got %s)" % (USERNAME,AWS_REGION,creddict['aws-region']))
-		if S3_BUCKET_NAME != creddict['bucketname']:
-				raise Exception("Error: credentials bucket mismatch for user %s (wanted %s got %s)" % (USERNAME,S3_BUCKET_NAME,creddict['bucketname']))
-		AWS_ACCESS_KEY = creddict['aws-access-key']
-		AWS_SECRET_ACCESS_KEY = creddict['aws-secret-access-key']
-
-
+    credfile = bucket.get_key(S3_CREDFILE)
+    creddict = json.loads(credfile.get_contents_as_string())
+    if USERNAME != creddict['username']:
+        raise Exception("Error: read credentials for wrong user (tried %s got %s)" % (USERNAME,creddict['username']))
+    if AWS_REGION != creddict['aws-region']:
+        raise Exception("Error: credentials region mismatch for user %s (wanted %s got %s)" % (USERNAME,AWS_REGION,creddict['aws-region']))
+    if S3_BUCKET_NAME != creddict['bucketname']:
+        raise Exception("Error: credentials bucket mismatch for user %s (wanted %s got %s)" % (USERNAME,S3_BUCKET_NAME,creddict['bucketname']))
+    AWS_ACCESS_KEY = creddict['aws-access-key']
+    AWS_SECRET_ACCESS_KEY = creddict['aws-secret-access-key']
 
 @functools.lru_cache(maxsize=1)
 def logger():
@@ -96,7 +110,11 @@ def logger():
     return logging.getLogger(__name__)
 
 def setup_dirs():
+    global OUTGRAPH_LOC,OUTDATA_LOC
+
     logger().info("Setting up directories")
+    OUTGRAPH_LOC   = os.path.join(OUTPUTLOC,"graphs")
+    OUTDATA_LOC    = os.path.join(OUTPUTLOC,"data")
     os.makedirs(INPUTLOC,exist_ok=True)
     os.makedirs(OUTGRAPH_LOC,exist_ok=True)
     os.makedirs(OUTDATA_LOC,exist_ok=True)
@@ -106,13 +124,13 @@ def setup_dirs():
     os.chdir(LATESTLOC)
     if not OUTPATH.exists():
         OUTPATH.mkdir(parents=True, exist_ok=True)
-        
+
 def read_region_data():
     logger().info("Getting region data")
-    
+
     # regions from: http://www.geocurrents.info/wp-content/uploads/2016/01/California-Regions-Map-2.png
     # (but orange lumped in with inland empire)
-    with open('input/%s_regions.csv' % STATE, 'r') as f:
+    with open(os.path.join(INPUTLOC,'%s_regions.csv' % STATE), 'r') as f:
         incsv = csv.reader(f)
         next(incsv) # ignore header
         regions = {}
@@ -141,8 +159,8 @@ def read_jhu_model_output():
     stack_dfs = {}
     with Pool(processes=math.ceil(os.cpu_count()/2)) as pool: # or whatever your hardware can support
         for scenario, inpath in SCENARIOS.items():
-            files = [os.path.join(inpath, f) for f in os.listdir(inpath) if f.find(INFILE_PREFIX)==0]
-            df_list = pool.map(restrict_csv_to_ca,files) 
+            files = [os.path.join(BASELOC,inpath, f) for f in os.listdir(os.path.join(BASELOC,inpath)) if f.find(INFILE_PREFIX)==0]
+            df_list = pool.map(restrict_csv_to_ca,files)
             stack_dfs[scenario] = pd.concat(df_list,ignore_index=True)
     return stack_dfs
 
@@ -153,14 +171,14 @@ def write_csv_output(dfdict):
         all_dfs = []
         for col in JHU_REMAP_COLS.keys():
             new_df = dfdict[scenario].groupby(['time', 'sim_num']).sum().groupby('time')[col].agg([np.mean, q50, q25, q75])
-				    new_df = new_df.reset_index().rename(columns={'mean': col + '_mean', 'q50': col + '_median', 'q25': col + '_q25', 'q75': col + '_q75'})
+            new_df = new_df.reset_index().rename(columns={'mean': col + '_mean', 'q50': col + '_median', 'q25': col + '_q25', 'q75': col + '_q75'})
             new_df['time'] = pd.to_datetime(new_df['time'])
-            all_dfs.append(new_df.sort_values(by='time'))      
+            all_dfs.append(new_df.sort_values(by='time'))
         all_df = functools.reduce(lambda x,y: pd.merge(x,y,on=['time'],how='inner'),all_dfs)
         output_loc = os.path.join(OUTDATA_LOC,"%s.csv" % scenario.replace(' ','_'))
         logger().info("Writing '%s' (%d rows) to %s:" % (scenario,len(all_df),output_loc))
         all_df.rename(columns=all_agg_cols).to_csv(output_loc,header=True,index=False)
-    
+
 @functools.lru_cache(maxsize=1)
 def connect_to_s3(access_key=None,secret_access_key=None,region=None):
     return boto.s3.connect_to_region(region,aws_access_key_id=access_key,aws_secret_access_key=secret_access_key)
@@ -183,6 +201,7 @@ def write_scenarios_to_s3(dfdict):
             filename = scenario.replace(' ','_')
             key = '%s/%s.csv' % (s3dir,filename)
             fullpath = os.path.join(OUTDATA_LOC,filename)+'.csv'
+            logger().info("Writing file (%s) to key %s" % (fullpath,key))
             write_file_to_s3(key,fullpath)
 
 def load_actuals():
@@ -221,7 +240,7 @@ def load_actuals():
     hosp_df['actual_susp_hosp'] = hosp_df['actual_susp_hosp'].astype('float')
     hosp_df['actual_icu'] = hosp_df['actual_icu'].astype('float')
     hosp_df['actual_susp_icu'] = hosp_df['actual_susp_icu'].astype('float')
-    
+
     return hosp_df
 
 def write_actuals_to_s3(input_df):
@@ -229,22 +248,29 @@ def write_actuals_to_s3(input_df):
     filename = "actual_hosp_data.csv"
     actuals_outfile = os.path.join(OUTDATA_LOC,filename)
     input_df.to_csv(actuals_outfile,header=True,index=False)
-1G    for s3dir in [ 'latest', date.today().isoformat().replace('-','')]:
+    for s3dir in [ 'latest', date.today().isoformat().replace('-','')]:
         key = '%s/%s' % (s3dir,filename)
         write_file_to_s3(key,actuals_outfile)
 
-def main():
+
+if __name__ == "__main__":
+    args = setup_argparse()
+    OUTPUTLOC = args.output
+    INPUTLOC  = args.input
+    START_FROM_CSVS = args.start_from_csvs
+
     logger().info("Starting jhu model output conversion")
+    scenarios_dict = {}
     setup_dirs()
-    read_region_data()
-    scenarios_dict = read_jhu_model_output()
-    write_csv_output(scenarios_dict)
+    if not START_FROM_CSVS:
+        read_region_data()
+        scenarios_dict = read_jhu_model_output()
+        write_csv_output(scenarios_dict)
+    else:
+        scenarios_dict = SCENARIOS
+    get_s3_credentials()
     write_scenarios_to_s3(scenarios_dict)
+
     # writing actuals causes problems for CA, so avoid for now
     # actuals_df = load_actuals()
     # write_actuals_to_s3(actuals_df)
-
-if __name__ == "__main__":
-		main()
-
-
