@@ -17,7 +17,9 @@ fi
 
 # mount stuff
 sudo mkfs -t xfs /dev/nvme1n1
-if [ $? ne 0 ]
+
+RESULT="$?"
+if [ "$RESULT" -ne 0 ]
 then
   echo "Error: failed to get mkfs"
   exit 1
@@ -26,7 +28,8 @@ fi
 sudo mkdir /data
 
 sudo mount /dev/nvme1n1 /data
-if [ $? ne 0 ]
+RESULT="$?"
+if [ "$RESULT" -ne 0 ]
 then
   echo "Error: failed to mount /dev/nvme1n1 as /data"
   exit 1
@@ -66,7 +69,8 @@ else
   exit 1
 fi
 
-if [ $? ne 0 ]
+RESULT="$?"
+if [ "$RESULT" -ne 0 ]
 then
   echo "Error: failed to unpackage ~/data/temp/$FILE_NAME"
   exit 1
