@@ -70,3 +70,5 @@ then
   echo "Error: failed to unpackage ~/data/temp/$FILE_NAME"
   exit 1
 fi
+
+echo Done!
