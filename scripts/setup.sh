@@ -1,7 +1,14 @@
 #!/bin/sh
 
-SCRIPT_DIR=$(readlink -f $0)
+SCRIPT_DIR=$(dirname "$0")
 INPUT_URL="$1"
+INPUT_URL_LEN=${#INPUT_URL}
+
+if [[ $INPUT_URL_LEN -lt 5 ]]
+then
+  echo Error: $INPUT_URL does not look right - should be s3 URL
+  exit 1
+fi
 
 # get python3
 sudo yum -y install python3
@@ -18,22 +25,9 @@ fi
 # mount stuff
 sudo mkfs -t xfs /dev/nvme1n1
 
-RESULT="$?"
-if [ "$RESULT" -ne 0 ]
-then
-  echo "Error: failed to get mkfs"
-  exit 1
-fi
-
 sudo mkdir /data
 
 sudo mount /dev/nvme1n1 /data
-RESULT="$?"
-if [ "$RESULT" -ne 0 ]
-then
-  echo "Error: failed to mount /dev/nvme1n1 as /data"
-  exit 1
-fi
 
 sudo chown $USER:$USER /data
 
@@ -44,14 +38,15 @@ mkdir ~/data/temp
 mkdir ~/data/input
 mkdir ~/data/input/now
 
-FILE_NAME="$(basename $INPUT_URL)"
+FILE_NAME=$(basename "$INPUT_URL")
 if [[ ! -f ~/data/temp/$FILE_NAME ]]
 then
   echo Getting $FILE_NAME from $INPUT_URL
   aws s3 cp $INPUT_URL ~/data/temp
-  if [ $? ne 0 ]
+  RESULT="$?"
+  if [ "$RESULT" -ne 0 ]
   then
-    echo "Error: failed to get $INPUT_URL from s3"
+    echo "Error: failed to get $INPUT_URL from s3, are your credentials set?"
     exit 1
   fi
 else
