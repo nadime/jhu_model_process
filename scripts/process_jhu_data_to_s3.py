@@ -12,16 +12,19 @@ import math
 import pickle
 import functools
 import itertools
+from collections import OrderedDict
 
 from multiprocessing import Pool
 
 import json
 import boto
+import glob
 
 import logging
 import argparse
 
 START_FROM_CSVS = False
+ADD_COUNTIES = False
 
 HOSP_DATA_CSV = "https://data.chhs.ca.gov/dataset/6882c390-b2d7-4b9a-aefa-2068cee63e47/resource/6cd8d424-dfaa-4bdd-9410-a3d656e1176e/download/covid19data.csv"
 HOSP_DATA_NEEDED_COLS = {
@@ -53,6 +56,7 @@ INPUTLOC       = ""
 OUTPUTLOC      = ""
 OUTGRAPH_LOC   = ""
 OUTDATA_LOC    = ""
+TEMPLOC        = "/home/ec2-user/temp"
 LATEST_SYMLINK = os.path.join(BASELOC,"latest")
 
 STATE = 'CA'
@@ -69,21 +73,23 @@ AWS_SECRET_ACCESS_KEY = ""
 
 # scenario name to file location
 SCENARIOS = {
-        'No Intervention': 'input/nonpi-hospitalization/model_output/unifiedNPI/',
-        'Statewide KC 1918': 'input/kclong-hospitalization/model_output/mid-west-coast-AZ-NV_SocialDistancingLong/',
-        'Statewide Lockdown 8 weeks': 'input/wuhan-hospitalization/model_output/unifiedWuhan/',
+        'No Intervention': 'nonpi-hospitalization/model_output/unifiedNPI/',
+        'Statewide KC 1918': 'kclong-hospitalization/model_output/mid-west-coast-AZ-NV_SocialDistancingLong/',
+        'Statewide Lockdown 8 weeks': 'wuhan-hospitalization/model_output/unifiedWuhan/',
+        'UK-Fixed-8w-FolMild': 'uk-fix-mild',
+        'UK-Fatigue-8w-FolMild': 'uk-fat-mild',
+        'UK-Fixed-8w-FolPulse': 'uk-fix-pulse',
+        'UK-Fatigue-8w-FolPulse': 'uk-fat-pulse',
 }
 
 INFILE_PREFIX = 'high_death'
-
-REGIONS = {}
-REGION_COUNTIES = {}
 
 def setup_argparse():
     # add s3 bucket as option?
     parser = argparse.ArgumentParser(description="Process JHU Model Outputs.")
     parser.add_argument('-i','--input',metavar='inputdir',dest='input',action="store",type=str,required=True,help='input directory to read graph_data from')
     parser.add_argument('-o','--output',metavar='inputdir',dest='output',action="store",type=str,required=True,help='base output directory')
+    parser.add_argument('--add_counties',action='store_true',default=False,help="set to add county-level data to outputs")
     parser.add_argument('--start_from_csvs',action='store_true',default=False,help="set to skip all data loading and just write to s3")
     return parser.parse_args()
 
@@ -125,21 +131,6 @@ def setup_dirs():
     if not OUTPATH.exists():
         OUTPATH.mkdir(parents=True, exist_ok=True)
 
-def read_region_data():
-    logger().info("Getting region data")
-
-    # regions from: http://www.geocurrents.info/wp-content/uploads/2016/01/California-Regions-Map-2.png
-    # (but orange lumped in with inland empire)
-    with open(os.path.join(INPUTLOC,'%s_regions.csv' % STATE), 'r') as f:
-        incsv = csv.reader(f)
-        next(incsv) # ignore header
-        regions = {}
-        region_counties = {}
-        for rec in incsv:
-            regions[rec[0]] = rec[1]
-            region_counties[rec[1]] = region_counties.get(rec[1], []) + [rec[0]]
-    return regions,region_counties
-
 def q25(x):
     return x.quantile(0.25)
 def q75(x):
@@ -150,34 +141,63 @@ def q50(x):
 def restrict_csv_to_ca(filename):
     input_df = pd.read_csv(filename)
     # some scenarios (e.g. Statewide KC 1918) have counties outside of CA, so ensure only CA counties present...
+    input_df['geoid'] = input_df['geoid'].astype('int32')
     return input_df.loc[(input_df['geoid'] >= BEGIN_CA_COUNTY) & (input_df['geoid'] < END_CA_COUNTY), ]
 
 @functools.lru_cache(maxsize=None)
 def read_jhu_model_output():
     logger().info("Reading JHU model output")
     # read in the raw model output scenario data for the scenarios in the SCENARIOS global...
-    stack_dfs = {}
+    stack_dfs = OrderedDict()
     with Pool(processes=math.ceil(os.cpu_count()/2)) as pool: # or whatever your hardware can support
         for scenario, inpath in SCENARIOS.items():
-            files = [os.path.join(BASELOC,inpath, f) for f in os.listdir(os.path.join(BASELOC,inpath)) if f.find(INFILE_PREFIX)==0]
+            input_dir = os.path.join(INPUTLOC,inpath)
+            files = [os.path.join(input_dir, f) for f in os.listdir(input_dir) if f.find(INFILE_PREFIX)==0]
             df_list = pool.map(restrict_csv_to_ca,files)
+            if len(df_list) == 0:
+                continue
             stack_dfs[scenario] = pd.concat(df_list,ignore_index=True)
     return stack_dfs
 
-def write_csv_output(dfdict):
-    logger().info("Writing scenario data to csv")
+def write_scenario_csv(scenario,input_pickle):
+    all_state_dfs = []
+    all_county_dfs= []
+    input_df = pd.read_pickle(input_pickle)
     all_agg_cols = { k+suff: JHU_REMAP_COLS[k]+suff for suff,k in itertools.product(OUTPUT_SUFFIXES,JHU_REMAP_COLS.keys()) }
+    filelist = []
+    for col in JHU_REMAP_COLS.keys():
+        new_state_df  = input_df.groupby(['time', 'sim_num']).sum().groupby('time')[col].agg([np.mean, q50, q25, q75])
+        new_state_df = new_state_df.reset_index().rename(columns={'mean': col + '_mean', 'q50': col + '_median', 'q25': col + '_q25', 'q75': col + '_q75'})
+        new_state_df['time'] = pd.to_datetime(new_state_df['time'])
+        all_state_dfs.append(new_state_df.sort_values(by='time'))
+        if ADD_COUNTIES:
+            new_county_df = input_df.groupby(['time', 'sim_num','geoid']).sum().groupby(['time','geoid'])[col].agg([np.mean, q50, q25, q75])
+            new_county_df = new_county_df.reset_index().rename(columns={'mean': col + '_mean', 'q50': col + '_median', 'q25': col + '_q25', 'q75': col + '_q75'})
+            new_county_df['time'] = pd.to_datetime(new_county_df['time'])
+            all_county_dfs.append(new_county_df.sort_values(by=['time','geoid']))
+    all_state_df = functools.reduce(lambda x,y: pd.merge(x,y,on=['time'],how='inner'),all_state_dfs)
+    output_state_loc = os.path.join(OUTDATA_LOC,"%s.csv" % scenario.replace(' ','_'))
+    all_state_df.rename(columns=all_agg_cols).to_csv(output_state_loc,header=True,index=False)
+    filelist.append(output_state_loc)
+    logger().info("Writing statewide file for scenario '%s' (%d rows) to %s:" % (scenario,len(all_state_df),output_state_loc))
+    if ADD_COUNTIES:
+        output_county_loc = os.path.join(OUTDATA_LOC,"%s.county.csv" % scenario.replace(' ','_'))
+        all_county_df = functools.reduce(lambda x,y: pd.merge(x,y,on=['time','geoid'],how='inner'),all_county_dfs)
+        logger().info("Writing county file for scenario '%s' (%d rows) to %s:" % (scenario,len(all_county_df),output_county_loc))
+        all_county_df.rename(columns=all_agg_cols).to_csv(output_county_loc,header=True,index=False)
+        filelist.append(output_county_loc)
+    return filelist
+
+def write_csv_output(dfdict):
+    logger().info("Writing scenario data to csv for %d scenarios: %s" % (len(dfdict.keys()),str(list(dfdict.keys()))))
+    scenario_to_pickle = OrderedDict()
     for scenario in dfdict.keys():
-        all_dfs = []
-        for col in JHU_REMAP_COLS.keys():
-            new_df = dfdict[scenario].groupby(['time', 'sim_num']).sum().groupby('time')[col].agg([np.mean, q50, q25, q75])
-            new_df = new_df.reset_index().rename(columns={'mean': col + '_mean', 'q50': col + '_median', 'q25': col + '_q25', 'q75': col + '_q75'})
-            new_df['time'] = pd.to_datetime(new_df['time'])
-            all_dfs.append(new_df.sort_values(by='time'))
-        all_df = functools.reduce(lambda x,y: pd.merge(x,y,on=['time'],how='inner'),all_dfs)
-        output_loc = os.path.join(OUTDATA_LOC,"%s.csv" % scenario.replace(' ','_'))
-        logger().info("Writing '%s' (%d rows) to %s:" % (scenario,len(all_df),output_loc))
-        all_df.rename(columns=all_agg_cols).to_csv(output_loc,header=True,index=False)
+        scenario_to_pickle[scenario] = os.path.join(TEMPLOC,"%s.pickle" % scenario)
+        logger().info("Writing temporary pickle for scenario %s to %s" % (scenario,scenario_to_pickle[scenario]))
+        dfdict[scenario].to_pickle(scenario_to_pickle[scenario])
+    with Pool(processes=min(os.cpu_count(),len(scenario_to_pickle.keys()))) as pool: # or whatever your hardware can support
+        filelists = pool.starmap(write_scenario_csv,zip(scenario_to_pickle.keys(),scenario_to_pickle.values()))
+    return reduce(lambda x,y: x.extend(y),filelists)
 
 @functools.lru_cache(maxsize=1)
 def connect_to_s3(access_key=None,secret_access_key=None,region=None):
@@ -194,13 +214,13 @@ def write_file_to_s3(key,filepath):
     k.key = key
     k.set_contents_from_filename(filepath)
 
-def write_scenarios_to_s3(dfdict):
+def write_scenarios_to_s3(filelist):
     logger().info("Writing scenario data to s3")
     for s3dir in [ 'latest', date.today().isoformat().replace('-','')]:
-        for scenario in dfdict.keys():
-            filename = scenario.replace(' ','_')
-            key = '%s/%s.csv' % (s3dir,filename)
-            fullpath = os.path.join(OUTDATA_LOC,filename)+'.csv'
+        for f in filelist:
+            bname = os.path.basename(f.replace(' ','_').replace(".csv",""))
+            key = '%s/%s.csv' % (s3dir,bname)
+            fullpath = os.path.join(OUTDATA_LOC,bname)+'.csv'
             logger().info("Writing file (%s) to key %s" % (fullpath,key))
             write_file_to_s3(key,fullpath)
 
@@ -258,18 +278,20 @@ if __name__ == "__main__":
     OUTPUTLOC = args.output
     INPUTLOC  = args.input
     START_FROM_CSVS = args.start_from_csvs
+    ADD_COUNTIES = args.add_counties
 
     logger().info("Starting jhu model output conversion")
     scenarios_dict = {}
     setup_dirs()
+
     if not START_FROM_CSVS:
-        read_region_data()
         scenarios_dict = read_jhu_model_output()
-        write_csv_output(scenarios_dict)
+        filelist = write_csv_output(scenarios_dict)
     else:
+        filelist = glob.glob(os.path.join(OUTPUTLOC,'data','*.csv'))
         scenarios_dict = SCENARIOS
     get_s3_credentials()
-    write_scenarios_to_s3(scenarios_dict)
+    write_scenarios_to_s3(filelist)
 
     # writing actuals causes problems for CA, so avoid for now
     # actuals_df = load_actuals()
