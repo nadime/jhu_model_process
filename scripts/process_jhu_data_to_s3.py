@@ -76,10 +76,10 @@ SCENARIOS = {
         'No Intervention': 'nonpi-hospitalization/model_output/unifiedNPI/',
         'Statewide KC 1918': 'kclong-hospitalization/model_output/mid-west-coast-AZ-NV_SocialDistancingLong/',
         'Statewide Lockdown 8 weeks': 'wuhan-hospitalization/model_output/unifiedWuhan/',
-        'UK-Fixed-8w-FolMild': 'uk-fix-mild',
-        'UK-Fatigue-8w-FolMild': 'uk-fat-mild',
-        'UK-Fixed-8w-FolPulse': 'uk-fix-pulse',
-        'UK-Fatigue-8w-FolPulse': 'uk-fat-pulse',
+        'UK-Fixed-8w-FolMild': 'hospitalization/model_output/mid-west-coast-AZ-NV_UKFixed_Mild',
+        'UK-Fatigue-8w-FolMild': 'hospitalization/model_output/mid-west-coast-AZ-NV_UKFatigue_Mild',
+        'UK-Fixed-8w-FolPulse': 'hospitalization/model_output/mid-west-coast-AZ-NV_UKFixed_Pulse',
+        'UK-Fatigue-8w-FolPulse': 'hospitalization/model_output/mid-west-coast-AZ-NV_UKFatigue_Pulse',
 }
 
 INFILE_PREFIX = 'high_death'
@@ -195,6 +195,9 @@ def write_csv_output(dfdict):
         scenario_to_pickle[scenario] = os.path.join(TEMPLOC,"%s.pickle" % scenario)
         logger().info("Writing temporary pickle for scenario %s to %s" % (scenario,scenario_to_pickle[scenario]))
         dfdict[scenario].to_pickle(scenario_to_pickle[scenario])
+    num_scenarios = len(scenario_to_pickle.keys())
+    if num_scenarios == 0:
+        raise Exception("no scenarios found - do input files line up with scenarios?  SCENARIO_DICT: %s" % SCENARIOS)
     with Pool(processes=min(os.cpu_count(),len(scenario_to_pickle.keys()))) as pool: # or whatever your hardware can support
         filelists = pool.starmap(write_scenario_csv,zip(scenario_to_pickle.keys(),scenario_to_pickle.values()))
     return reduce(lambda x,y: x.extend(y),filelists)
