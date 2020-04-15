@@ -1,12 +1,13 @@
 #!/bin/sh
 
+SCRIPT_DIR=$(readlink -f $0)
 INPUT_URL="$1"
 
 # get python3
 sudo yum -y install python3
 
 # install needed packages
-/usr/bin/pip3 install --user -r config/requirements.txt
+/usr/bin/pip3 install --user -r $SCRIPT_DIR/../config/requirements.txt
 
 if [[ -d /data ]]
 then
