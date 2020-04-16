@@ -123,7 +123,7 @@ def setup_dirs():
     os.makedirs(OUTDATA_LOC,exist_ok=True)
 
     LATESTLOC      = os.path.join(OUTPUTLOC,"%s" % date.today().isoformat().replace('-',''))
-    os.makedirs(INPUTLOC,exist_ok=True)
+    os.makedirs(LATESTLOC,exist_ok=True)
 
     LATEST_SYMLINK = os.path.join(OUTPUTLOC,"latest")
     if os.path.exists(LATEST_SYMLINK):
