@@ -193,6 +193,7 @@ def write_scenario_csv(scenario,input_pickle):
         logger().info("Writing county file for scenario '%s' (%d rows) to %s:" % (scenario,len(all_county_df),output_county_loc))
         all_county_df.rename(columns=all_agg_cols).to_csv(output_county_loc,header=True,index=False)
         filelist.append(output_county_loc)
+    logger().info("File list from %s: %s" % (scenario,str(filelist)))
     return filelist
 
 def write_csv_output(dfdict):
@@ -207,7 +208,8 @@ def write_csv_output(dfdict):
         raise Exception("no scenarios found - do input files line up with scenarios?  SCENARIO_DICT: %s" % SCENARIOS)
     with Pool(processes=min(os.cpu_count(),len(scenario_to_pickle.keys()))) as pool: # or whatever your hardware can support
         filelists = pool.starmap(write_scenario_csv,zip(scenario_to_pickle.keys(),scenario_to_pickle.values()))
-    return reduce(lambda x,y: x.extend(y),filelists)
+    logger().info("Filelists: %s" % str(filelists))
+    return [ val for sublist in filelists for val in sublist ]
 
 @functools.lru_cache(maxsize=1)
 def connect_to_s3(access_key=None,secret_access_key=None,region=None):
