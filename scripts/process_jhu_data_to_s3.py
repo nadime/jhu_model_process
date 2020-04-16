@@ -50,14 +50,11 @@ OUTPUT_SUFFIXES = [ '_mean', '_median', '_q25', '_q75']
 
 DATA_OUTPUT_COLS = ['hosp_curr','incidH','icu_curr','incidICU','incidI','incidD']
 
-BASELOC        = "/home/ec2-user/data/kitgraphs"
-LATESTLOC      = os.path.join(BASELOC,"%s" % date.today().isoformat().replace('-',''))
 INPUTLOC       = ""
 OUTPUTLOC      = ""
 OUTGRAPH_LOC   = ""
 OUTDATA_LOC    = ""
 TEMPLOC        = "/home/ec2-user/temp"
-LATEST_SYMLINK = os.path.join(BASELOC,"latest")
 
 STATE = 'CA'
 DATESLUG = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -124,9 +121,14 @@ def setup_dirs():
     os.makedirs(INPUTLOC,exist_ok=True)
     os.makedirs(OUTGRAPH_LOC,exist_ok=True)
     os.makedirs(OUTDATA_LOC,exist_ok=True)
+
+    LATESTLOC      = os.path.join(OUTPUTLOC,"%s" % date.today().isoformat().replace('-',''))
+    os.makedirs(INPUTLOC,exist_ok=True)
+
+    LATEST_SYMLINK = os.path.join(OUTPUTLOC,"latest")
     if os.path.exists(LATEST_SYMLINK):
         os.unlink(LATEST_SYMLINK)
-    os.symlink(LATESTLOC,os.path.join(BASELOC,"latest"))
+    os.symlink(LATESTLOC,os.path.join(OUTPUTLOC,"latest"))
     os.chdir(LATESTLOC)
     if not OUTPATH.exists():
         OUTPATH.mkdir(parents=True, exist_ok=True)
