@@ -154,7 +154,7 @@ def read_jhu_model_output():
     with Pool(processes=math.ceil(os.cpu_count()/2)) as pool: # or whatever your hardware can support
         for scenario, inpath in SCENARIOS.items():
             input_dir = os.path.join(INPUTLOC,inpath)
-            if not os.exists(input_dir):
+            if not os.path.exists(input_dir):
                 continue
             files = [os.path.join(input_dir, f) for f in os.listdir(input_dir) if f.find(INFILE_PREFIX)==0]
             df_list = pool.map(restrict_csv_to_ca,files)
