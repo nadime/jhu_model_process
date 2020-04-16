@@ -7,10 +7,12 @@ from datetime import date
 from pathlib import Path
 import csv
 import os
+import getpass
 import math
 
 import pickle
 import functools
+from functools import reduce
 import itertools
 from collections import OrderedDict
 
@@ -54,7 +56,7 @@ INPUTLOC       = ""
 OUTPUTLOC      = ""
 OUTGRAPH_LOC   = ""
 OUTDATA_LOC    = ""
-TEMPLOC        = "/home/ec2-user/temp"
+TEMPLOC        = "/home/%s/data/temp" % getpass.getuser()
 
 STATE = 'CA'
 DATESLUG = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -155,6 +157,7 @@ def read_jhu_model_output():
         for scenario, inpath in SCENARIOS.items():
             input_dir = os.path.join(INPUTLOC,inpath)
             if not os.path.exists(input_dir):
+                logger().info("Skipping %s because input directory %s does not exist" % (scenario,input_dir))
                 continue
             files = [os.path.join(input_dir, f) for f in os.listdir(input_dir) if f.find(INFILE_PREFIX)==0]
             df_list = pool.map(restrict_csv_to_ca,files)
@@ -190,6 +193,7 @@ def write_scenario_csv(scenario,input_pickle):
         logger().info("Writing county file for scenario '%s' (%d rows) to %s:" % (scenario,len(all_county_df),output_county_loc))
         all_county_df.rename(columns=all_agg_cols).to_csv(output_county_loc,header=True,index=False)
         filelist.append(output_county_loc)
+    logger().info("File list from %s: %s" % (scenario,str(filelist)))
     return filelist
 
 def write_csv_output(dfdict):
@@ -204,7 +208,8 @@ def write_csv_output(dfdict):
         raise Exception("no scenarios found - do input files line up with scenarios?  SCENARIO_DICT: %s" % SCENARIOS)
     with Pool(processes=min(os.cpu_count(),len(scenario_to_pickle.keys()))) as pool: # or whatever your hardware can support
         filelists = pool.starmap(write_scenario_csv,zip(scenario_to_pickle.keys(),scenario_to_pickle.values()))
-    return reduce(lambda x,y: x.extend(y),filelists)
+    logger().info("Filelists: %s" % str(filelists))
+    return [ val for sublist in filelists for val in sublist ]
 
 @functools.lru_cache(maxsize=1)
 def connect_to_s3(access_key=None,secret_access_key=None,region=None):
