@@ -25,6 +25,9 @@ import glob
 import logging
 import argparse
 
+CSV_EXT = ".csv"
+PAR_EXT = ".parquet"
+
 START_FROM_CSVS = False
 ADD_COUNTIES = False
 
@@ -79,6 +82,10 @@ SCENARIOS = {
         'UK-Fatigue-8w-FolMild': 'hospitalization/model_output/mid-west-coast-AZ-NV_UKFatigue_Mild',
         'UK-Fixed-8w-FolPulse': 'hospitalization/model_output/mid-west-coast-AZ-NV_UKFixed_Pulse',
         'UK-Fatigue-8w-FolPulse': 'hospitalization/model_output/mid-west-coast-AZ-NV_UKFatigue_Pulse',
+        'UK-Fixed-30_40': 'hospitalization/model_output/mid-west-coast-AZ-NV_UKFixed_30_40',
+        'UK-Fixed-40_50': 'hospitalization/model_output/mid-west-coast-AZ-NV_UKFixed_40_50',
+        'UK-Fixed-50_60': 'hospitalization/model_output/mid-west-coast-AZ-NV_UKFixed_50_60',
+        'UK-Fixed-60_70': 'hospitalization/model_output/mid-west-coast-AZ-NV_UKFixed_60_70',
 }
 
 INFILE_PREFIX = 'high_death'
@@ -143,7 +150,13 @@ def q50(x):
     return x.quantile(0.50)
 
 def restrict_csv_to_ca(filename):
-    input_df = pd.read_csv(filename)
+    name,ext = os.path.splitext(filename)
+    if ext == CSV_EXT:
+        input_df = pd.read_csv(filename)
+    elif ext == PAR_EXT:
+        input_df = pd.read_parquet(filename)
+    else:
+        raise Exception("Unhandled extension type %s found in input file %s" % ext,filename)
     # some scenarios (e.g. Statewide KC 1918) have counties outside of CA, so ensure only CA counties present...
     input_df['geoid'] = input_df['geoid'].astype('int32')
     return input_df.loc[(input_df['geoid'] >= BEGIN_CA_COUNTY) & (input_df['geoid'] < END_CA_COUNTY), ]
