@@ -109,7 +109,7 @@ Pebble==4.3.10
 pexpect==4.7.0
 pg8000==1.13.1
 pickleshare==0.7.5
-Pillow==6.2.1
+Pillow==8.1.1
 pkginfo==1.5.0.1
 pluggy==0.8.1
 plumbum==1.6.4
