@@ -125,7 +125,7 @@ pycparser==2.19
 pycryptodome==3.7.3
 pyflakes==2.1.0
 PyGithub==1.45
-Pygments==2.5.2
+Pygments==2.7.4
 PyJWT==1.7.1
 pymdown-extensions==6.0
 pyparsing==2.3.1
