@@ -22,7 +22,7 @@ boto==2.49.0
 boto3==1.9.139
 botocore==1.12.156
 bumpversion==0.5.3
-certifi==2019.11.28
+certifi==2022.12.7
 cffi==1.11.5
 cfn-lint==0.26.0
 chardet==3.0.4
